@@ -1,11 +1,14 @@
 use core::fmt;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use vfs::FileSystem;
 
-#[derive(Clone)]
-pub struct Hash(Vec<u8>);
+use crate::FsMap;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Hash(pub Vec<u8>);
 
 impl fmt::Debug for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -13,10 +16,10 @@ impl fmt::Debug for Hash {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlobHash(Hash);
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct G1t {
     index: Index,
     objects: Vec<Object>,
@@ -48,7 +51,7 @@ pub trait Storage {
 pub struct JsonStorage {
     index: Index,
     objects: Vec<Object>,
-    fs: Box<dyn FileSystem>,
+    pub fs: Box<dyn FileSystem>,
 }
 
 impl JsonStorage {
@@ -58,6 +61,82 @@ impl JsonStorage {
             objects: Vec::new(),
             fs,
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct FsMapedJson {
+    index: Index,
+    objects: FsMap,
+    mount: PathBuf,
+    pub fs: Box<dyn FileSystem>,
+}
+
+impl FsMapedJson {
+    pub fn new(mount: PathBuf, fs: Box<dyn FileSystem>) -> Self {
+        // Self { mount }
+        let index_path = mount.join("index.json");
+
+        if !fs
+            .exists(index_path.to_str().unwrap())
+            .unwrap_or(false)
+        {
+            let mut file = fs
+                .create_file(index_path.to_str().unwrap())
+                .unwrap();
+
+            file.write_all(
+                serde_json::to_string(&Index::default())
+                    .unwrap()
+                    .as_bytes(),
+            )
+            .unwrap();
+        }
+        let mut file = fs
+            .open_file(index_path.to_str().unwrap())
+            .unwrap();
+
+        let mut content = String::new();
+        file.read_to_string(&mut content)
+            .unwrap();
+
+        let index: Index = serde_json::from_str(&content).unwrap();
+
+        // if objects dir not exists, create it
+        if !fs
+            .exists(mount.join("objects").to_str().unwrap())
+            .unwrap_or(false)
+        {
+            fs.create_dir(mount.join("objects").to_str().unwrap())
+                .unwrap();
+        }
+
+        let objects = FsMap::new(mount.join("objects"));
+
+        Self {
+            index,
+            objects,
+            mount,
+            fs,
+        }
+    }
+
+    pub fn update_index(&mut self, content: Content) {
+        let hash = self.hash_object(Object::blob(content.content));
+        self.index.entries.push(Entry {
+            file_name: content.file_name,
+            blob_hash: BlobHash(hash),
+        });
+    }
+
+    pub fn hash_object(&mut self, object: Object) -> Hash {
+        let hash = object.hash();
+        self.objects.insert(
+            hash.clone(),
+            serde_json::to_string(&object).unwrap(),
+            &mut self.fs,
+        );
+        hash
     }
 }
 
@@ -94,9 +173,17 @@ impl Storage for JsonStorage {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Index {
     entries: Vec<Entry>,
+}
+
+impl Default for Index {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
 }
 
 impl Index {
@@ -107,13 +194,13 @@ impl Index {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Entry {
     file_name: String,
     blob_hash: BlobHash,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Object {
     Blob {
         hash: BlobHash,
@@ -121,7 +208,7 @@ pub enum Object {
     },
     Tree {
         hash: Hash,
-        contents: Vec<(String, Hash)>,
+        contents: Vec<(PathBuf, ObjectMode, Hash)>,
     },
     Commit {
         hash: Hash,
@@ -129,6 +216,13 @@ pub enum Object {
         tree_hash: Hash,
         parent_commit: Option<Hash>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ObjectMode {
+    Blob,
+    Tree,
+    Commit,
 }
 
 impl Object {
@@ -148,19 +242,53 @@ impl Object {
             content,
         }
     }
+
+    fn tree(contents: Vec<(PathBuf, Hash)>) -> Self {
+        let hash: Hash = Hash(
+            Sha1::digest(format!(
+                "{:?}",
+                contents
+                    .iter()
+                    .map(|c| c.1.clone())
+                    .collect::<Vec<_>>()
+            ))
+            .to_vec(),
+        );
+
+        Object::Tree {
+            hash: hash.clone(),
+            contents: contents
+                .iter()
+                .map(|c| (c.0.clone(), ObjectMode::Blob, c.1.clone()))
+                .collect(),
+        }
+    }
+
+    fn commit(message: String, tree_hash: Hash) -> Self {
+        let hash: Hash = Hash(Sha1::digest(message.clone()).to_vec());
+
+        Object::Commit {
+            hash: hash.clone(),
+            message,
+            tree_hash,
+            parent_commit: None,
+        }
+    }
 }
 
 pub enum Cmd {
     Add { file_name: String },
+    Commit { message: String },
 }
 
 pub struct Runner {
-    pub storage: Box<dyn Storage>,
+    // pub storage: Box<dyn Storage>,
+    pub storage: FsMapedJson,
     fs: Box<dyn FileSystem>,
 }
 
 impl Runner {
-    pub fn new(storage: Box<dyn Storage>, fs: Box<dyn FileSystem>) -> Self {
+    pub fn new(storage: FsMapedJson, fs: Box<dyn FileSystem>) -> Self {
         Self { storage, fs }
     }
 
@@ -179,6 +307,70 @@ impl Runner {
                     eprintln!("File not found");
                 }
             }
+            Cmd::Commit { message } => {
+                // let tree: Vec<(PathBuf, Hash)> = self
+                //     .storage
+                //     .index()
+                //     .entries
+                //     .iter()
+                //     .map(|entry| {
+                //         (
+                //             PathBuf::from(&entry.file_name),
+                //             entry.blob_hash.0.clone(),
+                //         )
+                //     })
+                //     .collect();
+
+                // let tree = Object::tree(tree);
+                // self.storage.hash_object(tree.clone());
+
+                // let commit = Object::commit(message, tree.hash());
+                // self.storage.hash_object(commit);
+            }
         }
     }
 }
+
+// impl Runner {
+//     pub fn new(storage: Box<dyn Storage>, fs: Box<dyn FileSystem>) -> Self {
+//         Self { storage, fs }
+//     }
+
+//     pub fn run(&mut self, cmd: Cmd) {
+//         match cmd {
+//             Cmd::Add { file_name } => {
+//                 if let Ok(mut file) = self.fs.open_file(&file_name) {
+//                     let mut content = String::new();
+//                     file.read_to_string(&mut content)
+//                         .unwrap();
+//                     println!("{:?}", content);
+
+//                     self.storage
+//                         .update_index(Content::new(file_name, content));
+//                 } else {
+//                     eprintln!("File not found");
+//                 }
+//             }
+//             Cmd::Commit { message } => {
+//                 let tree: Vec<(PathBuf, Hash)> = self
+//                     .storage
+//                     .index()
+//                     .entries
+//                     .iter()
+//                     .map(|entry| {
+//                         (
+//                             PathBuf::from(&entry.file_name),
+//                             entry.blob_hash.0.clone(),
+//                         )
+//                     })
+//                     .collect();
+
+//                 let tree = Object::tree(tree);
+//                 self.storage.hash_object(tree.clone());
+
+//                 let commit = Object::commit(message, tree.hash());
+//                 self.storage.hash_object(commit);
+//             }
+//         }
+//     }
+// }

@@ -1,172 +1,159 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use g1t::{JsonStorage, Runner};
+use g1t::{FsMap, FsMapedJson, Hash, JsonStorage, Runner, runner::Content};
 use vfs::{FileSystem, MemoryFS, VfsFileType};
 
 #[derive(Debug)]
+enum Node {
+    File { name: String, content: String },
+    Dir { name: String, children: Vec<Node> },
+}
+
+#[derive(Debug)]
 pub struct FsBuilder {
-    root: Directory,
+    nodes: Vec<Node>,
 }
 
 impl FsBuilder {
     pub fn new() -> Self {
-        Self {
-            root: Directory {
-                path: PathBuf::from("/root"),
-                contents: Vec::new(),
-            },
-        }
-    }
-}
-
-impl FsBuilder {
-    pub fn mkdir(
-        mut self,
-        directory_name: impl Into<String>,
-        child_builder: impl FnOnce(FsBuilder) -> FsBuilder,
-    ) -> Self {
-        let directory_name = directory_name.into();
-        let child_file_system = child_builder(FsBuilder::new());
-
-        self.root.contents.push(Data::directory(
-            directory_name.into(),
-            child_file_system.root.contents,
-        ));
-
-        self
+        Self { nodes: Vec::new() }
     }
 
     pub fn touch(
-        mut self,
-        file_name: impl Into<String>,
+        &mut self,
+        name: impl Into<String>,
         content: impl Into<String>,
-    ) -> Self {
-        self.root
-            .contents
-            .push(Data::file(file_name.into().into(), content.into()));
+    ) -> &mut Self {
+        self.nodes.push(Node::File {
+            name: name.into(),
+            content: content.into(),
+        });
         self
     }
 
-    pub fn build(self, mount_point: impl Into<String>) -> Box<dyn FileSystem> {
-        let fs: Box<dyn FileSystem> = Box::new(MemoryFS::new());
-
-        Self::build_rec(fs, &self.root.path.clone(), self.root.into())
+    pub fn mkdir(
+        &mut self,
+        name: impl Into<String>,
+        f: impl FnOnce(&mut FsBuilder),
+    ) -> &mut Self {
+        let mut child = FsBuilder::new();
+        f(&mut child);
+        self.nodes.push(Node::Dir {
+            name: name.into(),
+            children: child.nodes,
+        });
+        self
     }
 
-    fn build_rec_in(
-        root: &PathBuf,
-    ) -> impl FnMut(Box<dyn FileSystem>, Data) -> Box<dyn FileSystem> {
-        move |fs, data| Self::build_rec(fs, root, data)
+    pub fn execute(
+        &mut self,
+        mount: impl Into<PathBuf>,
+        fs: &mut impl FileSystem,
+    ) {
+        let mount = mount.into();
+
+        fs.create_dir(mount.to_str().unwrap())
+            .unwrap();
+
+        for node in self.nodes.iter() {
+            build_node(fs, &mount, node);
+        }
     }
+}
 
-    fn build_rec(
-        mut fs: Box<dyn FileSystem>,
-        root: &PathBuf,
-        data: Data,
-    ) -> Box<dyn FileSystem> {
-        match data {
-            Data::File { path, content } => {
-                fs.create_file(
-                    root.join(path.clone())
-                        .to_str()
-                        .unwrap(),
-                )
+fn build_node(fs: &mut impl FileSystem, base: &PathBuf, node: &Node) {
+    match node {
+        Node::File { name, content } => {
+            let path = base.join(&name);
+            fs.create_file(path.to_str().unwrap())
                 .unwrap();
-                fs.append_file(root.join(path).to_str().unwrap())
-                    .unwrap()
-                    .write_all(content.as_bytes())
-                    .unwrap();
-            }
-            Data::Directory(directory) => {
-                let path = directory.path.clone();
-                let contents = directory.contents.clone();
-
-                fs.create_dir(
-                    root.join(directory.path.clone())
-                        .to_str()
-                        .unwrap(),
-                )
+            fs.append_file(path.to_str().unwrap())
+                .unwrap()
+                .write_all(content.as_bytes())
                 .unwrap();
-
-                fs = contents
-                    .into_iter()
-                    .fold(fs, Self::build_rec_in(&root.join(path.clone())));
+        }
+        Node::Dir { name, children } => {
+            let path = base.join(&name);
+            fs.create_dir(path.to_str().unwrap())
+                .unwrap();
+            for child in children {
+                build_node(fs, &path, child);
             }
         }
-
-        fs
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Data {
-    File { path: PathBuf, content: String },
-    Directory(Directory),
-}
-
-#[derive(Debug, Clone)]
-pub struct Directory {
-    path: PathBuf,
-    contents: Vec<Data>,
-}
-
-impl Directory {
-    pub fn new(path: PathBuf, contents: Vec<Data>) -> Self {
-        Self { path, contents }
-    }
-}
-
-impl From<Directory> for Data {
-    fn from(directory: Directory) -> Self {
-        Self::Directory(directory)
-    }
-}
-
-impl Data {
-    pub fn file(path: PathBuf, content: String) -> Self {
-        Self::File { path, content }
-    }
-
-    pub fn directory(path: PathBuf, contents: Vec<Data>) -> Self {
-        Self::Directory(Directory::new(path, contents))
     }
 }
 
 fn main() {
-    let mut fs_builder = FsBuilder::new();
-    let fs = fs_builder
-        .mkdir("test_dir", |builder| {
-            builder
-                .touch("test_file", "test_content")
-                .mkdir("test_dir2", |builder| {
-                    builder.touch("test_file2", "test_content2")
-                })
-        })
-        .touch("test_file3", "test_content3");
-    println!("{:#?}", fs);
-    let fs = fs.build("/root");
+    // let mut fs_builder = FsBuilder::new();
+    // fs_builder
+    //     .mkdir("test_dir", |builder| {
+    //         builder.touch("test_file", "test_content");
+    //         builder.mkdir("test_dir2", |builder| {
+    //             builder.touch("test_file2", "test_content2");
+    //         });
+    //     })
+    //     .touch("test_file3", "test_content3");
 
-    into_data(fs, &PathBuf::from("/root"));
+    // let mut fs = MemoryFS::new();
+    // fs_builder.execute("/root", &mut fs);
 
     // let mut runner = Runner::new(
     //     Box::new(JsonStorage::new(Box::new(MemoryFS::new()))),
-    //     Box::new(mfs),
+    //     Box::new(fs),
     // );
 
     // println!(
-    //     "{:?}\n{:#?}",
+    //     "{:?} \n{:?}",
     //     runner.storage.index(),
     //     runner.storage.objects()
     // );
+
     // runner.run(g1t::Cmd::Add {
-    //     file_name: "/test_dir/test_file".to_string(),
+    //     file_name: "/root/test_dir/test_file".to_string(),
     // });
+
+    // runner.run(g1t::Cmd::Commit {
+    //     message: "test commit".to_string(),
+    // });
+
     // println!(
-    //     "== \n{:?}\n{:#?}",
+    //     "== after add {:#?}\n{:#?}",
     //     runner.storage.index(),
     //     runner.storage.objects()
     // );
+
+    let mut fs_builder = FsBuilder::new();
+    fs_builder.mkdir("g1t", |builder| {});
+
+    let mut fs = MemoryFS::new();
+    fs_builder.execute("/root", &mut fs);
+
+    let mut fs_maped_json = FsMapedJson::new("/root/g1t".into(), Box::new(fs));
+    println!("{:?}", fs_maped_json);
+
+    // fs_maped_json.update_index(Content::new(
+    //     "test_file".to_string(),
+    //     "test_content".to_string(),
+    // ));
+
+    let infs = MemoryFS::new();
+
+    let mut runner = Runner::new(fs_maped_json, Box::new(infs));
+
+    runner.run(g1t::Cmd::Add {
+        file_name: "/root/test_dir/test_file".to_string(),
+    });
+
+    // println!("{:?}", fs_maped_json);
+    // into_data(&mut fs_maped_json.fs, &PathBuf::from("/root/g1t"));
+    // let mut fs_map = FsMap::new("/root");
+    // fs_map.insert(Hash(vec![1, 2, 3, 4, 5]), "test_content", &mut fs);
+
+    // let mut entries = fs.read_dir("/root").unwrap();
+    // for entry in entries {
+    //     println!("{:?}", entry);
+    // }
 }
 
 fn pretty(fs: Box<dyn FileSystem>) {
@@ -176,22 +163,30 @@ fn pretty(fs: Box<dyn FileSystem>) {
     }
 }
 
-fn into_data(fs: Box<dyn FileSystem>, root: &PathBuf) -> Data {
+fn into_data(fs: &mut Box<dyn FileSystem>, root: &PathBuf) {
     let mut entries = fs
         .read_dir(root.to_str().unwrap())
         .unwrap();
 
     for entry in entries {
-        println!("{:?}", entry);
-        // match fs
-        //     .metadata(entry.as_str())
-        //     .unwrap()
-        //     .file_type
-        // {
-        //     VfsFileType::File => {}
-        //     VfsFileType::Directory => {}
-        // }
-    }
+        let meta = fs
+            .metadata(
+                root.join(entry.clone())
+                    .to_str()
+                    .unwrap(),
+            )
+            .unwrap();
 
-    todo!()
+        match meta.file_type {
+            VfsFileType::File => {
+                println!("file: {:#?}", entry);
+                println!("file: {:#?}", root.join(entry).to_str().unwrap());
+            }
+            VfsFileType::Directory => {
+                println!("dir: {:#?}", entry);
+                into_data(fs, &PathBuf::from(root).join(entry.clone()));
+                println!("dir: {:#?}", root.join(entry).to_str().unwrap());
+            }
+        }
+    }
 }
