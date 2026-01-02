@@ -43,13 +43,53 @@ impl FsBuilder {
     }
 
     pub fn build(self) -> Box<dyn FileSystem> {
-        let mut fs = MemoryFS::new();
+        let fs: Box<dyn FileSystem> = Box::new(MemoryFS::new());
 
-        for data in self.datas {
-            Self::build_rec(&mut fs, &PathBuf::from("/"), data);
+        self.datas
+            .into_iter()
+            .fold(fs, Self::build_rec_pure_in(&PathBuf::from("/")))
+    }
+
+    fn build_rec_pure_in(
+        root: &PathBuf,
+    ) -> impl FnMut(Box<dyn FileSystem>, Data) -> Box<dyn FileSystem> {
+        move |fs, data| Self::build_rec_pure(fs, root, data)
+    }
+
+    fn build_rec_pure(
+        mut fs: Box<dyn FileSystem>,
+        root: &PathBuf,
+        data: Data,
+    ) -> Box<dyn FileSystem> {
+        match data {
+            Data::File { path, content } => {
+                fs.create_file(
+                    root.join(path.clone())
+                        .to_str()
+                        .unwrap(),
+                )
+                .unwrap();
+                fs.append_file(root.join(path).to_str().unwrap())
+                    .unwrap()
+                    .write_all(content.as_bytes())
+                    .unwrap();
+            }
+            Data::Directory { path, contents } => {
+                fs.create_dir(
+                    root.join(path.clone())
+                        .to_str()
+                        .unwrap(),
+                )
+                .unwrap();
+
+                fs = contents.into_iter().fold(
+                    fs,
+                    Self::build_rec_pure_in(&root.join(path.clone())),
+                );
+            }
         }
 
-        Box::new(fs)
+        fs
     }
 
     fn build_rec(fs: &mut dyn FileSystem, root: &PathBuf, data: Data) {
