@@ -2,16 +2,21 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use g1t::{JsonStorage, Runner};
-use vfs::{FileSystem, MemoryFS};
+use vfs::{FileSystem, MemoryFS, VfsFileType};
 
 #[derive(Debug)]
 pub struct FsBuilder {
-    datas: Vec<Data>,
+    root: Directory,
 }
 
 impl FsBuilder {
     pub fn new() -> Self {
-        Self { datas: Vec::new() }
+        Self {
+            root: Directory {
+                path: PathBuf::from("/root"),
+                contents: Vec::new(),
+            },
+        }
     }
 }
 
@@ -24,9 +29,9 @@ impl FsBuilder {
         let directory_name = directory_name.into();
         let child_file_system = child_builder(FsBuilder::new());
 
-        self.datas.push(Data::directory(
+        self.root.contents.push(Data::directory(
             directory_name.into(),
-            child_file_system.datas,
+            child_file_system.root.contents,
         ));
 
         self
@@ -37,26 +42,25 @@ impl FsBuilder {
         file_name: impl Into<String>,
         content: impl Into<String>,
     ) -> Self {
-        self.datas
+        self.root
+            .contents
             .push(Data::file(file_name.into().into(), content.into()));
         self
     }
 
-    pub fn build(self) -> Box<dyn FileSystem> {
+    pub fn build(self, mount_point: impl Into<String>) -> Box<dyn FileSystem> {
         let fs: Box<dyn FileSystem> = Box::new(MemoryFS::new());
 
-        self.datas
-            .into_iter()
-            .fold(fs, Self::build_rec_pure_in(&PathBuf::from("/")))
+        Self::build_rec(fs, &self.root.path.clone(), self.root.into())
     }
 
-    fn build_rec_pure_in(
+    fn build_rec_in(
         root: &PathBuf,
     ) -> impl FnMut(Box<dyn FileSystem>, Data) -> Box<dyn FileSystem> {
-        move |fs, data| Self::build_rec_pure(fs, root, data)
+        move |fs, data| Self::build_rec(fs, root, data)
     }
 
-    fn build_rec_pure(
+    fn build_rec(
         mut fs: Box<dyn FileSystem>,
         root: &PathBuf,
         data: Data,
@@ -74,58 +78,49 @@ impl FsBuilder {
                     .write_all(content.as_bytes())
                     .unwrap();
             }
-            Data::Directory { path, contents } => {
+            Data::Directory(directory) => {
+                let path = directory.path.clone();
+                let contents = directory.contents.clone();
+
                 fs.create_dir(
-                    root.join(path.clone())
+                    root.join(directory.path.clone())
                         .to_str()
                         .unwrap(),
                 )
                 .unwrap();
 
-                fs = contents.into_iter().fold(
-                    fs,
-                    Self::build_rec_pure_in(&root.join(path.clone())),
-                );
+                fs = contents
+                    .into_iter()
+                    .fold(fs, Self::build_rec_in(&root.join(path.clone())));
             }
         }
 
         fs
     }
+}
 
-    fn build_rec(fs: &mut dyn FileSystem, root: &PathBuf, data: Data) {
-        match data {
-            Data::File { path, content } => {
-                fs.create_file(
-                    root.join(path.clone())
-                        .to_str()
-                        .unwrap(),
-                )
-                .unwrap();
-                fs.append_file(root.join(path).to_str().unwrap())
-                    .unwrap()
-                    .write_all(content.as_bytes())
-                    .unwrap();
-            }
-            Data::Directory { path, contents } => {
-                fs.create_dir(
-                    root.join(path.clone())
-                        .to_str()
-                        .unwrap(),
-                )
-                .unwrap();
+#[derive(Debug, Clone)]
+pub enum Data {
+    File { path: PathBuf, content: String },
+    Directory(Directory),
+}
 
-                for data in contents {
-                    Self::build_rec(fs, &root.join(path.clone()), data);
-                }
-            }
-        }
+#[derive(Debug, Clone)]
+pub struct Directory {
+    path: PathBuf,
+    contents: Vec<Data>,
+}
+
+impl Directory {
+    pub fn new(path: PathBuf, contents: Vec<Data>) -> Self {
+        Self { path, contents }
     }
 }
 
-#[derive(Debug)]
-pub enum Data {
-    File { path: PathBuf, content: String },
-    Directory { path: PathBuf, contents: Vec<Data> },
+impl From<Directory> for Data {
+    fn from(directory: Directory) -> Self {
+        Self::Directory(directory)
+    }
 }
 
 impl Data {
@@ -134,19 +129,25 @@ impl Data {
     }
 
     pub fn directory(path: PathBuf, contents: Vec<Data>) -> Self {
-        Self::Directory { path, contents }
+        Self::Directory(Directory::new(path, contents))
     }
 }
 
 fn main() {
     let mut fs_builder = FsBuilder::new();
-    let fs = fs_builder.mkdir("test_dir", |builder| {
-        builder.touch("test_file", "test_content")
-    });
+    let fs = fs_builder
+        .mkdir("test_dir", |builder| {
+            builder
+                .touch("test_file", "test_content")
+                .mkdir("test_dir2", |builder| {
+                    builder.touch("test_file2", "test_content2")
+                })
+        })
+        .touch("test_file3", "test_content3");
     println!("{:#?}", fs);
-    let fs = fs.build();
+    let fs = fs.build("/root");
 
-    pretty(fs);
+    into_data(fs, &PathBuf::from("/root"));
 
     // let mut runner = Runner::new(
     //     Box::new(JsonStorage::new(Box::new(MemoryFS::new()))),
@@ -173,4 +174,24 @@ fn pretty(fs: Box<dyn FileSystem>) {
     for entry in entries {
         println!("{:?}", entry);
     }
+}
+
+fn into_data(fs: Box<dyn FileSystem>, root: &PathBuf) -> Data {
+    let mut entries = fs
+        .read_dir(root.to_str().unwrap())
+        .unwrap();
+
+    for entry in entries {
+        println!("{:?}", entry);
+        // match fs
+        //     .metadata(entry.as_str())
+        //     .unwrap()
+        //     .file_type
+        // {
+        //     VfsFileType::File => {}
+        //     VfsFileType::Directory => {}
+        // }
+    }
+
+    todo!()
 }
