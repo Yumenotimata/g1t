@@ -1,64 +1,136 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
+use g1t::{JsonStorage, Runner};
+use vfs::{FileSystem, MemoryFS};
 
-use g1t::{AbsStorage, Content, FileSystem, storage};
-
-#[derive(Parser)]
-struct Cli {
-    #[clap(subcommand)]
-    command: SubCommand,
+#[derive(Debug)]
+pub struct FsBuilder {
+    datas: Vec<Data>,
 }
 
-#[derive(Subcommand)]
-enum SubCommand {
-    Init,
+impl FsBuilder {
+    pub fn new() -> Self {
+        Self { datas: Vec::new() }
+    }
 }
 
-#[derive(Debug, Clone)]
-enum Cmd {
-    Add(String, String),
-    Commit(String),
+impl FsBuilder {
+    pub fn mkdir(
+        mut self,
+        directory_name: impl Into<String>,
+        child_builder: impl FnOnce(FsBuilder) -> FsBuilder,
+    ) -> Self {
+        let directory_name = directory_name.into();
+        let child_file_system = child_builder(FsBuilder::new());
+
+        self.datas.push(Data::directory(
+            directory_name.into(),
+            child_file_system.datas,
+        ));
+
+        self
+    }
+
+    pub fn touch(
+        mut self,
+        file_name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        self.datas
+            .push(Data::file(file_name.into().into(), content.into()));
+        self
+    }
+
+    pub fn build(self) -> Box<dyn FileSystem> {
+        let mut fs = MemoryFS::new();
+
+        for data in self.datas {
+            Self::build_rec(&mut fs, &PathBuf::from("/"), data);
+        }
+
+        Box::new(fs)
+    }
+
+    fn build_rec(fs: &mut dyn FileSystem, root: &PathBuf, data: Data) {
+        match data {
+            Data::File { path, content } => {
+                fs.create_file(
+                    root.join(path.clone())
+                        .to_str()
+                        .unwrap(),
+                )
+                .unwrap();
+                fs.append_file(root.join(path).to_str().unwrap())
+                    .unwrap()
+                    .write_all(content.as_bytes())
+                    .unwrap();
+            }
+            Data::Directory { path, contents } => {
+                fs.create_dir(
+                    root.join(path.clone())
+                        .to_str()
+                        .unwrap(),
+                )
+                .unwrap();
+
+                for data in contents {
+                    Self::build_rec(fs, &root.join(path.clone()), data);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Data {
+    File { path: PathBuf, content: String },
+    Directory { path: PathBuf, contents: Vec<Data> },
+}
+
+impl Data {
+    pub fn file(path: PathBuf, content: String) -> Self {
+        Self::File { path, content }
+    }
+
+    pub fn directory(path: PathBuf, contents: Vec<Data>) -> Self {
+        Self::Directory { path, contents }
+    }
 }
 
 fn main() {
-    // let cli = Cli::parse();
+    let mut fs_builder = FsBuilder::new();
+    let fs = fs_builder.mkdir("test_dir", |builder| {
+        builder.touch("test_file", "test_content")
+    });
+    println!("{:#?}", fs);
+    let fs = fs.build();
 
-    // match cli.command {
-    //     SubCommand::Init => println!("Init"),
-    // }
+    pretty(fs);
 
-    // let mut file_system = FileSystem::new();
-    // file_system.mkdir("test_dir", |dir| {
-    //     dir.touch("test_file", "test_content");
-    //     dir.mkdir("test_dir2", |dir| {
-    //         dir.touch("test_file2", "test_content2");
-    //     });
-    //     dir.mkdir("test_dir3", |dir| {
-    //         dir.touch("test_file3", "test_content3");
-    //     });
+    // let mut runner = Runner::new(
+    //     Box::new(JsonStorage::new(Box::new(MemoryFS::new()))),
+    //     Box::new(mfs),
+    // );
+
+    // println!(
+    //     "{:?}\n{:#?}",
+    //     runner.storage.index(),
+    //     runner.storage.objects()
+    // );
+    // runner.run(g1t::Cmd::Add {
+    //     file_name: "/test_dir/test_file".to_string(),
     // });
-    // let file_system = file_system;
+    // println!(
+    //     "== \n{:?}\n{:#?}",
+    //     runner.storage.index(),
+    //     runner.storage.objects()
+    // );
+}
 
-    let mut abs_storage = AbsStorage::new();
-
-    let cmds = vec![
-        Cmd::Add("test_file".to_string(), "test_content".to_string()),
-        Cmd::Add("test_file2".to_string(), "test_content2".to_string()),
-        Cmd::Commit("test_message".to_string()),
-        Cmd::Add("test_file3".to_string(), "test_content3".to_string()),
-        Cmd::Commit("test_message2".to_string()),
-    ];
-
-    for cmd in cmds {
-        match cmd.clone() {
-            Cmd::Add(file_name, content) => {
-                abs_storage
-                    .update_index(vec![Content::new(file_name, content)]);
-            }
-            Cmd::Commit(message) => {
-                abs_storage.commit(message);
-            }
-        }
-
-        println!("=====after {:?}\n{:#?}\n", cmd, abs_storage);
+fn pretty(fs: Box<dyn FileSystem>) {
+    let mut entries = fs.read_dir("/test_dir").unwrap();
+    for entry in entries {
+        println!("{:?}", entry);
     }
 }
