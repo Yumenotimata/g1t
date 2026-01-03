@@ -4,13 +4,14 @@ use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use g1t::{Cli, Runtime, SubCommand};
+use g1t::{Cli, Index, Object, Runtime, SubCommand};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::{Frame, Terminal};
 use std::default;
+use std::fmt::Debug;
 use std::io::{self, Stdout};
 use tui_textarea::{Input, Key, TextArea};
 
@@ -20,6 +21,8 @@ pub struct Model {
     running_state: RunningState,
     runtime: Runtime,
     status: Result<String, String>,
+    index: Option<Index>,
+    objects: Option<Vec<Object>>,
 }
 
 impl Default for Model {
@@ -29,6 +32,8 @@ impl Default for Model {
             running_state: RunningState::Running,
             runtime: Runtime::new(),
             status: Ok(String::new()),
+            index: None,
+            objects: None,
         }
     }
 }
@@ -54,8 +59,11 @@ fn update(model: &mut Model, msg: Message) -> Option<Message> {
             model.status = model
                 .runtime
                 .run(model.input.clone())
-                .map(|_| "Success".to_owned())
+                .map(|index| "Success".to_owned())
                 .map_err(|e| e.to_string());
+
+            model.index = model.runtime.get_index().ok();
+            model.objects = model.runtime.get_objects().ok();
 
             model.input.clear();
             None
@@ -68,13 +76,36 @@ fn view(model: &Model, frame: &mut Frame) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Fill(1),
+            Constraint::Fill(1),
             Constraint::Max(3),
             Constraint::Max(3),
         ])
         .areas(frame.area());
 
-    let [index_area, input_area, status_area] = layout;
+    let [index_area, objects_area, input_area, status_area] = layout;
+
+    let index = match &model.index {
+        Some(index) => Paragraph::new(format!("{:?}", index))
+            .style(Style::default())
+            .block(Block::bordered().title("Index")),
+        None => Paragraph::new("No index")
+            .style(Style::default())
+            .block(Block::bordered().title("Index")),
+    };
+
+    frame.render_widget(index, index_area);
+
+    let objects = match &model.objects {
+        Some(objects) => Paragraph::new(format!("{:?}", objects))
+            .style(Style::default())
+            .block(Block::bordered().title("Objects")),
+        None => Paragraph::new("No objects")
+            .style(Style::default())
+            .block(Block::bordered().title("Objects")),
+    };
+
+    frame.render_widget(objects, objects_area);
 
     let input = Paragraph::new(model.input.clone())
         .style(Style::default())

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use vfs::FileSystem;
+use vfs::{FileSystem, VfsFileType};
 
 use crate::Hash;
 
@@ -9,19 +9,23 @@ pub struct FsMap {
     pub mount: PathBuf,
 }
 
+#[derive(Debug)]
+pub enum FsMapError {
+    MountDirNotFound,
+}
+
 impl FsMap {
-    pub fn new(mount: impl Into<PathBuf>) -> Self {
-        Self {
-            mount: mount.into(),
+    pub fn open(mount: impl Into<PathBuf>) -> Result<Self, FsMapError> {
+        let mount = mount.into();
+
+        if mount.exists() {
+            Ok(Self { mount })
+        } else {
+            Err(FsMapError::MountDirNotFound)
         }
     }
 
-    pub fn insert(
-        &mut self,
-        key: Hash,
-        value: impl Into<String>,
-        fs: &mut Box<dyn FileSystem>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn insert(&mut self, key: Hash, value: impl Into<String>, fs: &mut Box<dyn FileSystem>) {
         let (dir, file) = key.0.split_at(1);
 
         let dir_name = dir
@@ -35,15 +39,21 @@ impl FsMap {
             .map(|b| b.to_string())
             .collect::<String>();
 
-        let path = self.mount.join(dir_name).join(file_name);
+        let dir_path = self.mount.join(dir_name);
+        let file_path = &dir_path.join(file_name).to_str().unwrap().to_string();
+        let dir_path = dir_path.to_str().unwrap();
 
-        fs.create_dir(path.parent().unwrap().to_str().unwrap())?;
+        // キーのハッシュが同じならファイルが存在するなら、中身も同じなので上書き処理は必要ない
+        if fs.exists(file_path).unwrap() {
+            return;
+        }
 
-        let mut file = fs.create_file(path.to_str().unwrap())?;
+        fs.create_dir(dir_path).unwrap();
 
-        file.write_all(value.into().as_bytes())?;
+        let mut file = fs.create_file(file_path).expect("unreachable");
 
-        Ok(())
+        file.write_all(value.into().as_bytes())
+            .expect("unreachable");
     }
 
     pub fn get(&self, key: Hash, fs: &mut impl FileSystem) -> Option<String> {
@@ -72,4 +82,38 @@ impl FsMap {
             None
         }
     }
+
+    pub fn get_all(&self, fs: &mut Box<dyn FileSystem>) -> Vec<String> {
+        let mut result = Vec::new();
+
+        let dir = self.mount.to_str().unwrap();
+
+        for entry in ls_files(fs, dir) {
+            let mut file = fs.open_file(&entry).unwrap();
+            let mut content = String::new();
+            file.read_to_string(&mut content).unwrap();
+            result.push(content);
+        }
+
+        result
+    }
+}
+
+fn ls_files(fs: &mut Box<dyn FileSystem>, dir: &str) -> Vec<String> {
+    let mut result = Vec::new();
+
+    for entry in fs.read_dir(dir).unwrap() {
+        let path = PathBuf::from(dir).join(entry);
+        let meta = fs.metadata(path.to_str().unwrap()).unwrap();
+        match meta.file_type {
+            VfsFileType::Directory => {
+                result.extend(ls_files(fs, path.to_str().unwrap()));
+            }
+            VfsFileType::File => {
+                result.push(path.to_str().unwrap().to_string());
+            }
+        }
+    }
+
+    result
 }

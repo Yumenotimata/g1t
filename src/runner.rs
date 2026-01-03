@@ -66,13 +66,30 @@ impl JsonStorage {
 
 #[derive(Debug)]
 pub struct FsMapedJson {
-    index: Index,
-    objects: FsMap,
+    pub index: Index,
+    pub objects: FsMap,
     mount: PathBuf,
     pub fs: Box<dyn FileSystem>,
 }
 
 impl FsMapedJson {
+    pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let index_path = self.mount.join("index.json");
+        let mut file = self.fs.create_file(index_path.to_str().unwrap()).unwrap();
+        file.write_all(serde_json::to_string(&self.index).unwrap().as_bytes())
+            .unwrap();
+        Ok(())
+    }
+
+    pub fn load(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let index_path = self.mount.join("index.json");
+        let mut file = self.fs.open_file(index_path.to_str().unwrap()).unwrap();
+        let mut content = String::new();
+        file.read_to_string(&mut content).unwrap();
+        self.index = serde_json::from_str(&content).unwrap();
+        Ok(())
+    }
+
     pub fn new(mount: PathBuf, fs: Box<dyn FileSystem>) -> Self {
         // Self { mount }
         let index_path = mount.join("index.json");
@@ -99,7 +116,7 @@ impl FsMapedJson {
                 .unwrap();
         }
 
-        let objects = FsMap::new(mount.join("objects"));
+        let objects = FsMap::open(mount.join("objects")).unwrap();
 
         Self {
             index,
@@ -115,6 +132,7 @@ impl FsMapedJson {
             file_name: content.file_name,
             blob_hash: BlobHash(hash),
         });
+        self.save()?;
         Ok(())
     }
 
@@ -124,7 +142,7 @@ impl FsMapedJson {
             hash.clone(),
             serde_json::to_string(&object).unwrap(),
             &mut self.fs,
-        )?;
+        );
         Ok(hash)
     }
 }
@@ -162,7 +180,7 @@ impl Storage for JsonStorage {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Index {
     entries: Vec<Entry>,
 }
@@ -183,7 +201,7 @@ impl Index {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Entry {
     file_name: String,
     blob_hash: BlobHash,
