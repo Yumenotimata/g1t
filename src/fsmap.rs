@@ -18,11 +18,12 @@ impl FsMap {
     pub fn open(mount: impl Into<PathBuf>) -> Result<Self, FsMapError> {
         let mount = mount.into();
 
-        if mount.exists() {
-            Ok(Self { mount })
-        } else {
-            Err(FsMapError::MountDirNotFound)
-        }
+        // if mount.exists() {
+        //     Ok(Self { mount })
+        // } else {
+        //     Err(FsMapError::MountDirNotFound)
+        // }
+        Ok(Self { mount })
     }
 
     pub fn insert(&mut self, key: Hash, value: impl Into<String>, fs: &mut Box<dyn FileSystem>) {

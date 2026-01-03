@@ -22,15 +22,16 @@ impl Runtime {
     }
 
     pub fn get_objects(&self) -> Result<Vec<runner::Object>, Box<dyn std::error::Error>> {
-        let mut runner = runner::Runner::new();
+        // let mut runner = runner::Runner::new();
 
-        let objects = runner.storage.objects.get_all(&mut runner.storage.fs);
-        let objects = objects
-            .into_iter()
-            .map(|object| serde_json::from_str(&object).unwrap())
-            .collect::<Vec<runner::Object>>();
+        // let objects = runner.storage.objects.get_all(&mut runner.storage.fsw);
+        // let objects = objects
+        //     .into_iter()
+        //     .map(|object| serde_json::from_str(&object).unwrap())
+        //     .collect::<Vec<runner::Object>>();
 
-        Ok(objects)
+        // Ok(objects)
+        todo!()
     }
 
     pub fn run(&mut self, cmd: String) -> Result<String, Box<dyn std::error::Error>> {
@@ -46,20 +47,26 @@ impl Runtime {
 
         match cli.command {
             SubCommand::Init => {
+                runner.run(Cmd::Init).map_err(|e| {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("{:?}", e),
+                    ))
+                })?;
                 // let dir = self.infs.read_dir(".")?;
                 // for entry in dir {
                 //     println!("{}", entry);
                 // }
-                self.infs.create_dir(".g1t")?;
-                self.infs.create_dir(".g1t/objects")?;
+                // self.infs.create_dir(".g1t")?;
+                // self.infs.create_dir(".g1t/objects")?;
             }
             SubCommand::Reset => {
-                self.infs.remove_dir(".g1t/objects")?;
-                self.infs.remove_dir(".g1t")?;
+                // self.infs.remove_dir(".g1t/objects")?;
+                // self.infs.remove_dir(".g1t")?;
             }
             SubCommand::Add { path } => {
-                let res = runner.run(runner::Cmd::Add { file_name: path })?;
-                println!("{:?}", res);
+                // let res = runner.run(runner::Cmd::Add { file_name: path })?;
+                // println!("{:?}", res);
             }
         }
 

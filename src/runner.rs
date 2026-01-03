@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use vfs::FileSystem;
 
-use crate::FsMap;
+use crate::{FsMap, VfsWrapper};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Hash(pub Vec<u8>);
@@ -67,63 +67,56 @@ impl JsonStorage {
 #[derive(Debug)]
 pub struct FsMapedJson {
     pub index: Index,
-    pub objects: FsMap,
-    mount: PathBuf,
-    pub fs: Box<dyn FileSystem>,
+    // pub objects: FsMap,
+    pub fsw: VfsWrapper,
+}
+
+#[derive(Debug)]
+pub enum FsMapedJsonError {
+    AlreadyInitialized,
 }
 
 impl FsMapedJson {
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let index_path = self.mount.join("index.json");
-        let mut file = self.fs.create_file(index_path.to_str().unwrap()).unwrap();
-        file.write_all(serde_json::to_string(&self.index).unwrap().as_bytes())
-            .unwrap();
-        Ok(())
+        // let index_path = self.mount.join("index.json");
+        // let mut file = self.fs.create_file(index_path.to_str().unwrap()).unwrap();
+        // file.write_all(serde_json::to_string(&self.index).unwrap().as_bytes())
+        //     .unwrap();
+        // Ok(())
+        // let mut file =
+        todo!()
     }
 
     pub fn load(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let index_path = self.mount.join("index.json");
-        let mut file = self.fs.open_file(index_path.to_str().unwrap()).unwrap();
-        let mut content = String::new();
-        file.read_to_string(&mut content).unwrap();
-        self.index = serde_json::from_str(&content).unwrap();
+        // let index_path = self.mount.join("index.json");
+        // let mut file = self.fs.open_file(index_path.to_str().unwrap()).unwrap();
+        // let mut content = String::new();
+        // file.read_to_string(&mut content).unwrap();
+        // self.index = serde_json::from_str(&content).unwrap();
         Ok(())
     }
 
-    pub fn new(mount: PathBuf, fs: Box<dyn FileSystem>) -> Self {
-        // Self { mount }
-        let index_path = mount.join("index.json");
-
-        if !fs.exists(index_path.to_str().unwrap()).unwrap_or(false) {
-            let mut file = fs.create_file(index_path.to_str().unwrap()).unwrap();
-
-            file.write_all(serde_json::to_string(&Index::default()).unwrap().as_bytes())
-                .unwrap();
-        }
-        let mut file = fs.open_file(index_path.to_str().unwrap()).unwrap();
-
-        let mut content = String::new();
-        file.read_to_string(&mut content).unwrap();
-
-        let index: Index = serde_json::from_str(&content).unwrap();
-
-        // if objects dir not exists, create it
-        if !fs
-            .exists(mount.join("objects").to_str().unwrap())
-            .unwrap_or(false)
-        {
-            fs.create_dir(mount.join("objects").to_str().unwrap())
-                .unwrap();
-        }
-
-        let objects = FsMap::open(mount.join("objects")).unwrap();
+    pub fn new() -> Self {
+        let fsw = VfsWrapper::new(vfs::PhysicalFS::new("./"));
 
         Self {
-            index,
-            objects,
-            mount,
-            fs,
+            index: Index::default(),
+            // objects: FsMap::open("./.g1t/objects").unwrap(),
+            fsw,
         }
+    }
+
+    pub fn init(&mut self) -> Result<(), FsMapedJsonError> {
+        if self.fsw.exists("./.g1t") {
+            return Err(FsMapedJsonError::AlreadyInitialized);
+        }
+
+        let mut index_file = self.fsw.create_file("./.g1t/index.json");
+        index_file.write(serde_json::to_string(&Index::default()).unwrap().as_bytes());
+
+        self.fsw.create_dir_all("./.g1t/objects");
+
+        Ok(())
     }
 
     pub fn update_index(&mut self, content: Content) -> Result<(), Box<dyn std::error::Error>> {
@@ -137,13 +130,14 @@ impl FsMapedJson {
     }
 
     pub fn hash_object(&mut self, object: Object) -> Result<Hash, Box<dyn std::error::Error>> {
-        let hash = object.hash();
-        self.objects.insert(
-            hash.clone(),
-            serde_json::to_string(&object).unwrap(),
-            &mut self.fs,
-        );
-        Ok(hash)
+        // let hash = object.hash();
+        // self.objects.insert(
+        //     hash.clone(),
+        //     serde_json::to_string(&object).unwrap(),
+        //     &mut self.fs,
+        // );
+        // Ok(hash)
+        todo!()
     }
 }
 
@@ -283,6 +277,7 @@ impl Object {
 pub enum Cmd {
     Add { file_name: String },
     Commit { message: String },
+    Init,
 }
 
 #[derive(Debug)]
@@ -299,24 +294,24 @@ impl Runner {
 
     pub fn new() -> Self {
         Self {
-            storage: FsMapedJson::new(".g1t/objects".into(), Box::new(vfs::PhysicalFS::new("."))),
-            fs: Box::new(vfs::PhysicalFS::new(".")),
+            storage: FsMapedJson::new(),
+            fs: Box::new(vfs::PhysicalFS::new("./")),
         }
     }
 
-    pub fn run(&mut self, cmd: Cmd) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&mut self, cmd: Cmd) -> Result<(), FsMapedJsonError> {
         match cmd {
             Cmd::Add { file_name } => {
-                if let Ok(mut file) = self.fs.open_file(&file_name) {
-                    let mut content = String::new();
-                    file.read_to_string(&mut content)?;
-                    println!("{}", content);
+                // if let Ok(mut file) = self.fs.open_file(&file_name) {
+                //     let mut content = String::new();
+                //     file.read_to_string(&mut content)?;
+                //     println!("{}", content);
 
-                    self.storage
-                        .update_index(Content::new(file_name, content))?;
-                } else {
-                    println!("File not found");
-                }
+                //     self.storage
+                //         .update_index(Content::new(file_name, content))?;
+                // } else {
+                //     println!("File not found");
+                // }
             }
             Cmd::Commit { message } => {
                 // let tree: Vec<(PathBuf, Hash)> = self
@@ -337,6 +332,9 @@ impl Runner {
 
                 // let commit = Object::commit(message, tree.hash());
                 // self.storage.hash_object(commit);
+            }
+            Cmd::Init => {
+                self.storage.init()?;
             }
         }
 

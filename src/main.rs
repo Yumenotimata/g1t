@@ -62,8 +62,8 @@ fn update(model: &mut Model, msg: Message) -> Option<Message> {
                 .map(|index| "Success".to_owned())
                 .map_err(|e| e.to_string());
 
-            model.index = model.runtime.get_index().ok();
-            model.objects = model.runtime.get_objects().ok();
+            // model.index = model.runtime.get_index().ok();
+            // model.objects = model.runtime.get_objects().ok();
 
             model.input.clear();
             None
