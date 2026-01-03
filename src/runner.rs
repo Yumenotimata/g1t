@@ -109,22 +109,23 @@ impl FsMapedJson {
         }
     }
 
-    pub fn update_index(&mut self, content: Content) {
-        let hash = self.hash_object(Object::blob(content.content));
+    pub fn update_index(&mut self, content: Content) -> Result<(), Box<dyn std::error::Error>> {
+        let hash = self.hash_object(Object::blob(content.content))?;
         self.index.entries.push(Entry {
             file_name: content.file_name,
             blob_hash: BlobHash(hash),
         });
+        Ok(())
     }
 
-    pub fn hash_object(&mut self, object: Object) -> Hash {
+    pub fn hash_object(&mut self, object: Object) -> Result<Hash, Box<dyn std::error::Error>> {
         let hash = object.hash();
         self.objects.insert(
             hash.clone(),
             serde_json::to_string(&object).unwrap(),
             &mut self.fs,
-        );
-        hash
+        )?;
+        Ok(hash)
     }
 }
 
@@ -266,6 +267,7 @@ pub enum Cmd {
     Commit { message: String },
 }
 
+#[derive(Debug)]
 pub struct Runner {
     // pub storage: Box<dyn Storage>,
     pub storage: FsMapedJson,
@@ -273,21 +275,29 @@ pub struct Runner {
 }
 
 impl Runner {
-    pub fn new(storage: FsMapedJson, fs: Box<dyn FileSystem>) -> Self {
-        Self { storage, fs }
+    // pub fn new(storage: FsMapedJson, fs: Box<dyn FileSystem>) -> Self {
+    //     Self { storage, fs }
+    // }
+
+    pub fn new() -> Self {
+        Self {
+            storage: FsMapedJson::new(".g1t/objects".into(), Box::new(vfs::PhysicalFS::new("."))),
+            fs: Box::new(vfs::PhysicalFS::new(".")),
+        }
     }
 
-    pub fn run(&mut self, cmd: Cmd) {
+    pub fn run(&mut self, cmd: Cmd) -> Result<(), Box<dyn std::error::Error>> {
         match cmd {
             Cmd::Add { file_name } => {
                 if let Ok(mut file) = self.fs.open_file(&file_name) {
                     let mut content = String::new();
-                    file.read_to_string(&mut content).unwrap();
-                    println!("{:?}", content);
+                    file.read_to_string(&mut content)?;
+                    println!("{}", content);
 
-                    self.storage.update_index(Content::new(file_name, content));
+                    self.storage
+                        .update_index(Content::new(file_name, content))?;
                 } else {
-                    eprintln!("File not found");
+                    println!("File not found");
                 }
             }
             Cmd::Commit { message } => {
@@ -311,6 +321,8 @@ impl Runner {
                 // self.storage.hash_object(commit);
             }
         }
+
+        Ok(())
     }
 }
 

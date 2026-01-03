@@ -11,7 +11,7 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::{Frame, Terminal};
 use std::default;
-use std::io::{self, Result, Stdout};
+use std::io::{self, Stdout};
 use tui_textarea::{Input, Key, TextArea};
 
 #[derive(Debug)]
@@ -19,6 +19,7 @@ pub struct Model {
     input: String,
     running_state: RunningState,
     runtime: Runtime,
+    status: Result<String, String>,
 }
 
 impl Default for Model {
@@ -26,7 +27,8 @@ impl Default for Model {
         Self {
             input: String::new(),
             running_state: RunningState::Running,
-            runtime: Runtime::new(Box::new(vfs::MemoryFS::new())),
+            runtime: Runtime::new(),
+            status: Ok(String::new()),
         }
     }
 }
@@ -39,6 +41,7 @@ enum Message {
     Quit,
     SetInput(String),
     Enter,
+    SetError(String),
 }
 
 fn update(model: &mut Model, msg: Message) -> Option<Message> {
@@ -48,7 +51,12 @@ fn update(model: &mut Model, msg: Message) -> Option<Message> {
             None
         }
         Message::Enter => {
-            model.runtime.run(model.input.clone());
+            model.status = model
+                .runtime
+                .run(model.input.clone())
+                .map(|_| "Success".to_owned())
+                .map_err(|e| e.to_string());
+
             model.input.clear();
             None
         }
@@ -59,17 +67,39 @@ fn update(model: &mut Model, msg: Message) -> Option<Message> {
 fn view(model: &Model, frame: &mut Frame) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        // .margin(1)
-        .constraints([Constraint::Length(3), Constraint::Max(3)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Max(3),
+            Constraint::Max(3),
+        ])
         .areas(frame.area());
 
-    let [index_area, input_area] = layout;
+    let [index_area, input_area, status_area] = layout;
 
     let input = Paragraph::new(model.input.clone())
         .style(Style::default())
         .block(Block::bordered().title("Input"));
 
     frame.render_widget(input, input_area);
+
+    let status = match &model.status {
+        Ok(msg) => {
+            if msg.is_empty() {
+                Paragraph::new(msg.clone())
+                    .style(Style::default().fg(Color::default()))
+                    .block(Block::bordered().title("Status"))
+            } else {
+                Paragraph::new(msg.clone())
+                    .style(Style::default().fg(Color::Green))
+                    .block(Block::bordered().title("Status"))
+            }
+        }
+        Err(error) => Paragraph::new(error.clone())
+            .style(Style::default().fg(Color::Red))
+            .block(Block::bordered().title("Status")),
+    };
+
+    frame.render_widget(status, status_area);
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
@@ -112,6 +142,7 @@ impl App {
                     key: Key::Enter, ..
                 } => {
                     update(&mut self.model, Message::Enter);
+                    textarea.delete_line_by_head();
                 }
                 input => {
                     if textarea.input(input) {
@@ -155,25 +186,25 @@ impl App {
     // }
 }
 
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
     let mut stdout = io::stdout();
     crossterm::terminal::enable_raw_mode()?;
     crossterm::execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide)?;
     Terminal::new(CrosstermBackend::new(stdout))
 }
 
-fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
     let mut stdout = io::stdout();
     crossterm::terminal::disable_raw_mode()?;
     crossterm::execute!(stdout, LeaveAlternateScreen, DisableMouseCapture, Show)?;
     Ok(())
 }
 
-fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
     App::default().run(terminal)
 }
 
-fn main() -> Result<()> {
+fn main() -> io::Result<()> {
     // let cli = Cli::parse();
     // match cli.command {
     //     SubCommand::Touch { path } => {

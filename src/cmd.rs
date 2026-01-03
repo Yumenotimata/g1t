@@ -9,5 +9,6 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum SubCommand {
     Init,
-    Touch { path: String },
+    Reset,
+    Add { path: String },
 }

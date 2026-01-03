@@ -1,37 +1,49 @@
 use clap::{CommandFactory, FromArgMatches, Parser};
 use vfs::FileSystem;
 
-use crate::{Cli, SubCommand};
+use crate::{Cli, Cmd, Runner, SubCommand, runner};
 
 #[derive(Debug)]
 pub struct Runtime {
-    fs: Box<dyn FileSystem>,
+    infs: Box<dyn FileSystem>,
 }
 
 impl Runtime {
-    pub fn new(fs: Box<dyn FileSystem>) -> Self {
-        Self { fs }
+    pub fn new() -> Self {
+        Self {
+            infs: Box::new(vfs::PhysicalFS::new(".")),
+        }
     }
 
-    pub fn run(&mut self, cmd: String) {
-        // clapはstd::os::argsを入力としてとる前提で設計されているので
-        // プログラム名argv[0]にあたるダミー引数を渡している
-        let mut args = cmd.split_ascii_whitespace().collect::<Vec<&str>>();
+    pub fn run(&mut self, cmd: String) -> Result<String, Box<dyn std::error::Error>> {
+        let args = cmd.split_ascii_whitespace().collect::<Vec<&str>>();
 
         let arg_matches = Cli::command()
             .no_binary_name(true)
-            .try_get_matches_from(args)
-            .unwrap();
+            .try_get_matches_from(args)?;
 
-        let cli = Cli::from_arg_matches(&arg_matches).unwrap();
+        let cli = Cli::from_arg_matches(&arg_matches)?;
 
         match cli.command {
-            SubCommand::Touch { path } => {
-                self.fs.create_file(&path).unwrap();
-            }
             SubCommand::Init => {
-                println!("Initializing");
+                // let dir = self.infs.read_dir(".")?;
+                // for entry in dir {
+                //     println!("{}", entry);
+                // }
+                self.infs.create_dir(".g1t")?;
+                self.infs.create_dir(".g1t/objects")?;
+            }
+            SubCommand::Reset => {
+                self.infs.remove_dir(".g1t/objects")?;
+                self.infs.remove_dir(".g1t")?;
+            }
+            SubCommand::Add { path } => {
+                let mut runner = runner::Runner::new();
+                let res = runner.run(runner::Cmd::Add { file_name: path })?;
+                println!("{:?}", res);
             }
         }
+
+        Ok("".to_string())
     }
 }
