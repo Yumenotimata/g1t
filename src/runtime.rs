@@ -42,8 +42,6 @@ impl Runtime {
 
         let cli = Cli::from_arg_matches(&arg_matches)?;
 
-        let mut runner = runner::Runner::new();
-
         match cli.command {
             SubCommand::Init => {
                 // let dir = self.infs.read_dir(".")?;
@@ -58,7 +56,13 @@ impl Runtime {
                 self.infs.remove_dir(".g1t")?;
             }
             SubCommand::Add { path } => {
+                let mut runner = runner::Runner::new();
                 let res = runner.run(runner::Cmd::Add { file_name: path })?;
+                println!("{:?}", res);
+            }
+            SubCommand::Commit { message } => {
+                let mut runner = runner::Runner::new();
+                let res = runner.run(runner::Cmd::Commit { message })?;
                 println!("{:?}", res);
             }
         }

@@ -4,7 +4,7 @@ use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use g1t::{Cli, Index, Object, Runtime, SubCommand};
+use g1t::{Cli, Index, Object, ObjectView, Runtime, SubCommand, render_index};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
@@ -85,27 +85,24 @@ fn view(model: &Model, frame: &mut Frame) {
 
     let [index_area, objects_area, input_area, status_area] = layout;
 
-    let index = match &model.index {
-        Some(index) => Paragraph::new(format!("{:?}", index))
-            .style(Style::default())
-            .block(Block::bordered().title("Index")),
-        None => Paragraph::new("No index")
-            .style(Style::default())
-            .block(Block::bordered().title("Index")),
-    };
+    if let Some(index) = &model.index {
+        render_index(index.clone(), index_area, frame);
+    }
 
-    frame.render_widget(index, index_area);
+    if let Some(objects) = &model.objects {
+        ObjectView::new(objects.clone()).render(objects_area, frame);
+    }
 
-    let objects = match &model.objects {
-        Some(objects) => Paragraph::new(format!("{:?}", objects))
-            .style(Style::default())
-            .block(Block::bordered().title("Objects")),
-        None => Paragraph::new("No objects")
-            .style(Style::default())
-            .block(Block::bordered().title("Objects")),
-    };
+    // let objects = match &model.objects {
+    //     Some(objects) => Paragraph::new(format!("{:?}", objects))
+    //         .style(Style::default())
+    //         .block(Block::bordered().title("Objects")),
+    //     None => Paragraph::new("No objects")
+    //         .style(Style::default())
+    //         .block(Block::bordered().title("Objects")),
+    // };
 
-    frame.render_widget(objects, objects_area);
+    // frame.render_widget(objects, objects_area);
 
     let input = Paragraph::new(model.input.clone())
         .style(Style::default())

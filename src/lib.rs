@@ -9,3 +9,6 @@ pub use runtime::*;
 
 pub mod cmd;
 pub use cmd::*;
+
+pub mod view;
+pub use view::*;

@@ -11,4 +11,5 @@ pub enum SubCommand {
     Init,
     Reset,
     Add { path: String },
+    Commit { message: String },
 }
