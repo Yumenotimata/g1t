@@ -1,8 +1,10 @@
+use clap::Parser;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use g1t::{Cli, Runtime, SubCommand};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
@@ -12,10 +14,11 @@ use std::default;
 use std::io::{self, Result, Stdout};
 use tui_textarea::{Input, Key, TextArea};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Model {
     input: String,
     running_state: RunningState,
+    runtime: Runtime,
 }
 
 impl Default for Model {
@@ -23,6 +26,7 @@ impl Default for Model {
         Self {
             input: String::new(),
             running_state: RunningState::Running,
+            runtime: Runtime::new(Box::new(vfs::MemoryFS::new())),
         }
     }
 }
@@ -44,7 +48,7 @@ fn update(model: &mut Model, msg: Message) -> Option<Message> {
             None
         }
         Message::Enter => {
-            println!("Input: {}", model.input);
+            model.runtime.run(model.input.clone());
             model.input.clear();
             None
         }
@@ -170,6 +174,15 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    // let cli = Cli::parse();
+    // match cli.command {
+    //     SubCommand::Touch { path } => {
+    //         println!("Touching {}", path);
+    //     }
+    //     SubCommand::Init => {
+    //         println!("Initializing");
+    //     }
+    // }
     let mut terminal = setup_terminal()?;
     run_app(&mut terminal)?;
     teardown_terminal(&mut terminal)?;
