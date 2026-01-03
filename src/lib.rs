@@ -1,2 +1,2 @@
-pub mod safe_fs;
-pub use safe_fs::*;
+pub mod vfs_wrapper;
+pub use vfs_wrapper::*;
